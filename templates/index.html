@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Photos Browser</title>
+    <link rel="stylesheet" href="/static/styles.css">
+  </head>
+  <body>
+    <main class="page">
+      <header class="hero">
+        <p class="eyebrow">Local Photos Browser</p>
+        <p class="lede">
+          Metadata comes from <code>Photos.sqlite</code>. Originals are streamed by the backend from your local library package.
+        </p>
+      </header>
+
+      <section class="controls">
+        <label for="query">Search</label>
+        <div class="search-row">
+          <input id="query" name="query" type="search" placeholder="Try filename, album, keyword, note, tag..." />
+          <button id="search-button" type="button">Search</button>
+        </div>
+      </section>
+
+      <section class="results-layout">
+        <div id="results" class="results"></div>
+        <aside id="detail" class="detail-panel">
+          <p class="detail-empty">Select a result to inspect it here.</p>
+        </aside>
+      </section>
+    </main>
+
+    <script src="/static/app.js"></script>
+  </body>
+  </html>

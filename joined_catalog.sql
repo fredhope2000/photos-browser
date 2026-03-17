@@ -23,6 +23,26 @@ generated_tags AS (
     group_concat(tag, '; ') AS generated_tags
   FROM enrich.asset_tags
   GROUP BY asset_uuid
+),
+automatic_labels AS (
+  SELECT
+    mapped.uuid_0,
+    mapped.uuid_1,
+    group_concat(mapped.content_string, '; ') AS automatic_labels
+  FROM (
+    SELECT DISTINCT
+      a.uuid_0,
+      a.uuid_1,
+      replace(g.content_string, char(0), '') AS content_string
+    FROM psi.assets a
+    JOIN psi.ga ga
+      ON ga.assetid = a.rowid
+    JOIN psi.groups g
+      ON g.rowid = ga.groupid
+    WHERE g.category IN (1500, 1501, 1510)
+      AND coalesce(replace(g.content_string, char(0), ''), '') <> ''
+  ) mapped
+  GROUP BY mapped.uuid_0, mapped.uuid_1
 )
 SELECT
   a.ZUUID AS asset_uuid,
@@ -42,6 +62,7 @@ SELECT
   a.ZKIND AS kind,
   a.ZWIDTH AS width,
   a.ZHEIGHT AS height,
+  a.ZUNIFORMTYPEIDENTIFIER AS uti,
   a.ZFAVORITE AS is_favorite,
   a.ZHIDDEN AS is_hidden,
   aa.ZTITLE AS title,
@@ -54,6 +75,7 @@ SELECT
   p.place_name,
   p.region,
   p.country,
+  auto.automatic_labels,
   gt.generated_tags,
   st.search_text
 FROM ZASSET a
@@ -69,10 +91,11 @@ LEFT JOIN enrich.asset_notes n
   ON n.asset_uuid = a.ZUUID
 LEFT JOIN enrich.asset_places p
   ON p.asset_uuid = a.ZUUID
+LEFT JOIN automatic_labels auto
+  ON auto.uuid_0 = uuid_to_psi_hi(a.ZUUID)
+ AND auto.uuid_1 = uuid_to_psi_lo(a.ZUUID)
 LEFT JOIN generated_tags gt
   ON gt.asset_uuid = a.ZUUID
 LEFT JOIN enrich.asset_search_text st
   ON st.asset_uuid = a.ZUUID
-WHERE a.ZTRASHEDSTATE = 0
-ORDER BY a.ZDATECREATED
-LIMIT ?;
+WHERE a.ZTRASHEDSTATE = 0;

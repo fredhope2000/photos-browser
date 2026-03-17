@@ -1,0 +1,5 @@
+local_config.json
+enrichment.db
+enrichment.db-shm
+enrichment.db-wal
+__pycache__/

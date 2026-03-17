@@ -1,0 +1,4 @@
+{
+  "photos_library_path": "/absolute/path/to/Photos Library.photoslibrary",
+  "enrichment_db_path": "./enrichment.db"
+}

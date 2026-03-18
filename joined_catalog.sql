@@ -1,21 +1,34 @@
 WITH keyword_agg AS (
   SELECT
-    jk.Z_1ASSETATTRIBUTES AS asset_attr_pk,
-    group_concat(k.ZTITLE, '; ') AS keywords
-  FROM Z_1KEYWORDS jk
-  JOIN ZKEYWORD k
-    ON k.Z_PK = jk.Z_52KEYWORDS
-  GROUP BY jk.Z_1ASSETATTRIBUTES
+    ordered.asset_attr_pk,
+    group_concat(ordered.keyword_title, '; ') AS keywords
+  FROM (
+    SELECT DISTINCT
+      jk.Z_1ASSETATTRIBUTES AS asset_attr_pk,
+      k.ZTITLE AS keyword_title
+    FROM Z_1KEYWORDS jk
+    JOIN ZKEYWORD k
+      ON k.Z_PK = jk.Z_52KEYWORDS
+    WHERE coalesce(k.ZTITLE, '') <> ''
+    ORDER BY jk.Z_1ASSETATTRIBUTES, lower(k.ZTITLE), k.ZTITLE
+  ) ordered
+  GROUP BY ordered.asset_attr_pk
 ),
 album_agg AS (
   SELECT
-    j.Z_3ASSETS AS asset_pk,
-    group_concat(g.ZTITLE, '; ') AS albums
-  FROM Z_33ASSETS j
-  JOIN ZGENERICALBUM g
-    ON g.Z_PK = j.Z_33ALBUMS
-  WHERE coalesce(g.ZTITLE, '') <> ''
-  GROUP BY j.Z_3ASSETS
+    ordered.asset_pk,
+    group_concat(ordered.album_title, '; ') AS albums
+  FROM (
+    SELECT DISTINCT
+      j.Z_3ASSETS AS asset_pk,
+      g.ZTITLE AS album_title
+    FROM Z_33ASSETS j
+    JOIN ZGENERICALBUM g
+      ON g.Z_PK = j.Z_33ALBUMS
+    WHERE coalesce(g.ZTITLE, '') <> ''
+    ORDER BY j.Z_3ASSETS, lower(g.ZTITLE), g.ZTITLE
+  ) ordered
+  GROUP BY ordered.asset_pk
 ),
 generated_tags AS (
   SELECT
@@ -41,6 +54,7 @@ automatic_labels AS (
       ON g.rowid = ga.groupid
     WHERE g.category IN (1500, 1501, 1510)
       AND coalesce(replace(g.content_string, char(0), ''), '') <> ''
+    ORDER BY a.uuid_0, a.uuid_1, lower(replace(g.content_string, char(0), '')), replace(g.content_string, char(0), '')
   ) mapped
   GROUP BY mapped.uuid_0, mapped.uuid_1
 )

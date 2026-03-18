@@ -2,6 +2,7 @@ const resultsEl = document.getElementById("results");
 const detailEl = document.getElementById("detail");
 const queryEl = document.getElementById("query");
 const searchButtonEl = document.getElementById("search-button");
+const includeInferredEl = document.getElementById("include-inferred");
 
 let currentActiveUuid = null;
 
@@ -115,7 +116,11 @@ function renderResults(assets) {
 }
 
 async function loadResults() {
-  const query = new URLSearchParams({ q: queryEl.value, limit: "40" });
+  const query = new URLSearchParams({
+    q: queryEl.value,
+    limit: "40",
+    include_inferred: includeInferredEl.checked ? "1" : "0",
+  });
   const response = await fetch(`/api/assets?${query.toString()}`);
   if (!response.ok) {
     resultsEl.innerHTML = '<p class="detail-empty">Failed to load results.</p>';
@@ -126,6 +131,7 @@ async function loadResults() {
 }
 
 searchButtonEl.addEventListener("click", loadResults);
+includeInferredEl.addEventListener("change", loadResults);
 queryEl.addEventListener("keydown", (event) => {
   if (event.key === "Enter") {
     loadResults();

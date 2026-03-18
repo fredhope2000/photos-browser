@@ -43,6 +43,7 @@ def create_app() -> Flask:
     def list_assets():
         query = request.args.get("q", "").strip().lower()
         limit = min(max(request.args.get("limit", default=50, type=int), 1), 200)
+        include_inferred = request.args.get("include_inferred", "1") not in {"0", "false", "False"}
 
         sql = f"""
         SELECT *
@@ -62,6 +63,11 @@ def create_app() -> Flask:
                OR search_matches(coalesce(notes, ''), ?)
                OR search_matches(coalesce(generated_tags, ''), ?)
                OR search_matches(coalesce(search_text, ''), ?)
+            """
+            params.extend([query] * 9)
+
+            if include_inferred:
+                sql += """
                OR EXISTS (
                  SELECT 1
                  FROM psi.assets pa
@@ -74,7 +80,7 @@ def create_app() -> Flask:
                    AND search_matches(coalesce(pg.normalized_string, ''), ?)
                )
             """
-            params.extend([query] * 10)
+                params.append(query)
 
         sql += " ORDER BY created_utc DESC LIMIT ?"
         params.append(limit)

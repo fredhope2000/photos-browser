@@ -82,6 +82,21 @@ h1 {
   gap: 12px;
 }
 
+.toggle-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 14px;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.toggle-row input {
+  inline-size: 18px;
+  block-size: 18px;
+  accent-color: var(--accent);
+}
+
 .search-row input,
 .search-row button {
   border-radius: 14px;

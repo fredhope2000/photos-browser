@@ -1,4 +1,5 @@
 import mimetypes
+import shlex
 from pathlib import Path
 from typing import Mapping
 
@@ -30,6 +31,26 @@ def create_app() -> Flask:
             return value.replace("\x00", "")
         return value
 
+    def parse_search_terms(raw_query: str) -> list[tuple[str, bool]]:
+        raw_query = raw_query.strip()
+        if not raw_query:
+            return []
+        try:
+            terms = shlex.split(raw_query)
+        except ValueError:
+            terms = raw_query.split()
+        parsed_terms: list[tuple[str, bool]] = []
+        for term in terms:
+            cleaned = term.strip()
+            if not cleaned:
+                continue
+            is_negative = cleaned.startswith("-") and len(cleaned) > 1
+            if is_negative:
+                cleaned = cleaned[1:].strip()
+            if cleaned:
+                parsed_terms.append((cleaned, is_negative))
+        return parsed_terms
+
     def asset_row_to_dict(row: Mapping[str, object]) -> dict:
         payload = {key: clean_value(value) for key, value in dict(row).items()}
         payload["media_url"] = f"/media/original/{payload['asset_uuid']}"
@@ -42,6 +63,7 @@ def create_app() -> Flask:
     @app.get("/api/assets")
     def list_assets():
         query = request.args.get("q", "").strip().lower()
+        terms = parse_search_terms(query)
         limit = min(max(request.args.get("limit", default=50, type=int), 1), 200)
         include_inferred = request.args.get("include_inferred", "1") not in {"0", "false", "False"}
 
@@ -52,35 +74,43 @@ def create_app() -> Flask:
         ) catalog
         """
         params: list[object] = []
-        if query:
-            sql += """
-            WHERE search_matches(coalesce(title, ''), ?)
-               OR search_matches(coalesce(description, ''), ?)
-               OR search_matches(coalesce(original_filename, ''), ?)
-               OR search_matches(coalesce(keywords, ''), ?)
-               OR search_matches(coalesce(albums, ''), ?)
-               OR search_matches(coalesce(summary, ''), ?)
-               OR search_matches(coalesce(notes, ''), ?)
-               OR search_matches(coalesce(generated_tags, ''), ?)
-               OR search_matches(coalesce(search_text, ''), ?)
-            """
-            params.extend([query] * 9)
+        if terms:
+            term_clauses: list[str] = []
+            for term, is_negative in terms:
+                clause = """
+                (
+                  search_matches(coalesce(title, ''), ?)
+                  OR search_matches(coalesce(description, ''), ?)
+                  OR search_matches(coalesce(original_filename, ''), ?)
+                  OR search_matches(coalesce(keywords, ''), ?)
+                  OR search_matches(coalesce(albums, ''), ?)
+                  OR search_matches(coalesce(summary, ''), ?)
+                  OR search_matches(coalesce(notes, ''), ?)
+                  OR search_matches(coalesce(generated_tags, ''), ?)
+                  OR search_matches(coalesce(search_text, ''), ?)
+                """
+                params.extend([term] * 9)
 
-            if include_inferred:
-                sql += """
-               OR EXISTS (
-                 SELECT 1
-                 FROM psi.assets pa
-                 JOIN psi.ga pga
-                   ON pga.assetid = pa.rowid
-                 JOIN psi.groups pg
-                   ON pg.rowid = pga.groupid
-                 WHERE pa.uuid_0 = uuid_to_psi_hi(catalog.asset_uuid)
-                   AND pa.uuid_1 = uuid_to_psi_lo(catalog.asset_uuid)
-                   AND search_matches(coalesce(pg.normalized_string, ''), ?)
-               )
-            """
-                params.append(query)
+                if include_inferred:
+                    clause += """
+                  OR EXISTS (
+                    SELECT 1
+                    FROM psi.assets pa
+                    JOIN psi.ga pga
+                      ON pga.assetid = pa.rowid
+                    JOIN psi.groups pg
+                      ON pg.rowid = pga.groupid
+                    WHERE pa.uuid_0 = uuid_to_psi_hi(catalog.asset_uuid)
+                      AND pa.uuid_1 = uuid_to_psi_lo(catalog.asset_uuid)
+                      AND search_matches(coalesce(pg.normalized_string, ''), ?)
+                  )
+                    """
+                    params.append(term)
+
+                clause += "\n                )"
+                term_clauses.append(f"NOT {clause}" if is_negative else clause)
+
+            sql += "\nWHERE " + "\n  AND ".join(term_clauses)
 
         sql += " ORDER BY created_utc DESC LIMIT ?"
         params.append(limit)

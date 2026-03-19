@@ -3,8 +3,20 @@ const detailEl = document.getElementById("detail");
 const queryEl = document.getElementById("query");
 const searchButtonEl = document.getElementById("search-button");
 const includeInferredEl = document.getElementById("include-inferred");
+const layoutModeEl = document.getElementById("layout-mode");
+const resultsLayoutEl = document.querySelector(".results-layout");
+const paneResizerEl = document.getElementById("pane-resizer");
 
 let currentActiveUuid = null;
+let activeResizePointerId = null;
+let currentAssets = [];
+
+const LAYOUT_STORAGE_KEY = "photos-browser-results-width-px";
+const VIEW_MODE_STORAGE_KEY = "photos-browser-layout-mode";
+const INCLUDE_INFERRED_STORAGE_KEY = "photos-browser-include-inferred";
+const RESULTS_MIN_WIDTH = 280;
+const DETAIL_MIN_WIDTH = 420;
+const RESIZER_WIDTH = 12;
 
 function escapeHtml(value) {
   return String(value ?? "")
@@ -14,12 +26,86 @@ function escapeHtml(value) {
     .replaceAll('"', "&quot;");
 }
 
+function clamp(value, min, max) {
+  return Math.min(Math.max(value, min), max);
+}
+
+function getMaxResultsWidth() {
+  const bounds = resultsLayoutEl.getBoundingClientRect();
+  return Math.max(RESULTS_MIN_WIDTH, bounds.width - DETAIL_MIN_WIDTH - RESIZER_WIDTH);
+}
+
+function applyResultsWidth(widthPx) {
+  const clampedWidth = clamp(widthPx, RESULTS_MIN_WIDTH, getMaxResultsWidth());
+  resultsLayoutEl.style.setProperty("--results-width", `${clampedWidth}px`);
+}
+
+function loadPaneWidth() {
+  const stored = window.localStorage.getItem(LAYOUT_STORAGE_KEY);
+  if (!stored) {
+    return;
+  }
+  const parsed = Number.parseFloat(stored);
+  if (!Number.isNaN(parsed)) {
+    applyResultsWidth(parsed);
+  }
+}
+
+function loadUiPreferences() {
+  const savedLayout = window.localStorage.getItem(VIEW_MODE_STORAGE_KEY);
+  if (savedLayout === "list" || savedLayout === "grid") {
+    layoutModeEl.value = savedLayout;
+  }
+
+  const savedIncludeInferred = window.localStorage.getItem(INCLUDE_INFERRED_STORAGE_KEY);
+  if (savedIncludeInferred === "1" || savedIncludeInferred === "0") {
+    includeInferredEl.checked = savedIncludeInferred === "1";
+  }
+}
+
+function beginResize(event) {
+  if (window.innerWidth <= 960) {
+    return;
+  }
+  activeResizePointerId = event.pointerId;
+  paneResizerEl.setPointerCapture(activeResizePointerId);
+  resultsLayoutEl.classList.add("is-resizing");
+}
+
+function updateResize(event) {
+  if (activeResizePointerId !== event.pointerId || window.innerWidth <= 960) {
+    return;
+  }
+  const bounds = resultsLayoutEl.getBoundingClientRect();
+  const leftWidth = event.clientX - bounds.left - (RESIZER_WIDTH / 2);
+  const clampedWidth = clamp(leftWidth, RESULTS_MIN_WIDTH, getMaxResultsWidth());
+  applyResultsWidth(clampedWidth);
+  window.localStorage.setItem(LAYOUT_STORAGE_KEY, String(clampedWidth));
+}
+
+function endResize(event) {
+  if (activeResizePointerId !== event.pointerId) {
+    return;
+  }
+  paneResizerEl.releasePointerCapture(activeResizePointerId);
+  activeResizePointerId = null;
+  resultsLayoutEl.classList.remove("is-resizing");
+}
+
 function mediaMarkup(asset) {
   const filename = (asset.current_filename || "").toLowerCase();
   if (filename.endsWith(".mov") || filename.endsWith(".mp4") || filename.endsWith(".m4v")) {
     return `<video controls preload="metadata" src="${asset.media_url}"></video>`;
   }
-  return `<img src="${asset.media_url}" alt="${escapeHtml(asset.original_filename || asset.current_filename || asset.asset_uuid)}">`;
+  return `<img src="${asset.media_url}" loading="eager" alt="${escapeHtml(asset.original_filename || asset.current_filename || asset.asset_uuid)}">`;
+}
+
+function thumbnailMarkup(asset) {
+  const filename = (asset.current_filename || "").toLowerCase();
+  if (filename.endsWith(".mov") || filename.endsWith(".mp4") || filename.endsWith(".m4v")) {
+    return `<video muted playsinline preload="none" src="${asset.media_url}"></video>`;
+  }
+  return `<img src="${asset.media_url}" loading="lazy" alt="${escapeHtml(asset.original_filename || asset.current_filename || asset.asset_uuid)}">`;
 }
 
 function chipMarkup(label) {
@@ -79,10 +165,36 @@ function renderDetail(asset) {
   `;
 }
 
+function updateActiveCard() {
+  for (const card of resultsEl.querySelectorAll(".result-card")) {
+    card.classList.toggle("active", card.dataset.uuid === currentActiveUuid);
+  }
+}
+
+function selectAsset(assetUuid) {
+  const asset = currentAssets.find((item) => item.asset_uuid === assetUuid);
+  if (!asset) {
+    return;
+  }
+  currentActiveUuid = asset.asset_uuid;
+  updateActiveCard();
+  renderDetail(asset);
+}
+
+function bindResultCardHandlers() {
+  for (const card of resultsEl.querySelectorAll(".result-card")) {
+    card.addEventListener("click", () => {
+      selectAsset(card.dataset.uuid);
+    });
+  }
+}
+
 function renderResults(assets) {
+  currentAssets = assets;
   if (!assets.length) {
     resultsEl.innerHTML = '<p class="detail-empty">No results.</p>';
     detailEl.innerHTML = '<p class="detail-empty">Try a broader search.</p>';
+    currentAssets = [];
     return;
   }
 
@@ -93,22 +205,33 @@ function renderResults(assets) {
   const selected = assets.find((asset) => asset.asset_uuid === currentActiveUuid) || assets[0];
   currentActiveUuid = selected.asset_uuid;
 
-  resultsEl.innerHTML = assets.map((asset) => `
-    <article class="result-card${asset.asset_uuid === currentActiveUuid ? " active" : ""}" data-uuid="${asset.asset_uuid}">
-      <h2 class="result-title">${escapeHtml(asset.title || asset.original_filename || asset.current_filename)}</h2>
-      <p class="result-meta">${escapeHtml(asset.created_utc || "Unknown time")}</p>
-      <p class="result-meta">${escapeHtml(asset.keywords || asset.generated_tags || asset.original_path)}</p>
-    </article>
-  `).join("");
+  const layoutMode = layoutModeEl.value;
+  resultsEl.classList.toggle("results-grid", layoutMode === "grid");
+  resultsEl.classList.toggle("results-list", layoutMode !== "grid");
+
+  if (layoutMode === "grid") {
+    resultsEl.innerHTML = assets.map((asset) => `
+      <article class="result-card result-tile${asset.asset_uuid === currentActiveUuid ? " active" : ""}" data-uuid="${asset.asset_uuid}">
+        <div class="tile-media">${thumbnailMarkup(asset)}</div>
+        <div class="tile-body">
+          <h2 class="result-title">${escapeHtml(asset.title || asset.original_filename || asset.current_filename)}</h2>
+          <p class="result-meta">${escapeHtml(asset.created_utc || "Unknown time")}</p>
+          <p class="result-meta">${escapeHtml(asset.keywords || asset.generated_tags || asset.original_path)}</p>
+        </div>
+      </article>
+    `).join("");
+  } else {
+    resultsEl.innerHTML = assets.map((asset) => `
+      <article class="result-card${asset.asset_uuid === currentActiveUuid ? " active" : ""}" data-uuid="${asset.asset_uuid}">
+        <h2 class="result-title">${escapeHtml(asset.title || asset.original_filename || asset.current_filename)}</h2>
+        <p class="result-meta">${escapeHtml(asset.created_utc || "Unknown time")}</p>
+        <p class="result-meta">${escapeHtml(asset.keywords || asset.generated_tags || asset.original_path)}</p>
+      </article>
+    `).join("");
+  }
 
   renderDetail(selected);
-
-  for (const card of resultsEl.querySelectorAll(".result-card")) {
-    card.addEventListener("click", () => {
-      currentActiveUuid = card.dataset.uuid;
-      renderResults(assets);
-    });
-  }
+  bindResultCardHandlers();
 }
 
 async function loadResults() {
@@ -127,11 +250,31 @@ async function loadResults() {
 }
 
 searchButtonEl.addEventListener("click", loadResults);
-includeInferredEl.addEventListener("change", loadResults);
+includeInferredEl.addEventListener("change", () => {
+  window.localStorage.setItem(INCLUDE_INFERRED_STORAGE_KEY, includeInferredEl.checked ? "1" : "0");
+  loadResults();
+});
+layoutModeEl.addEventListener("change", () => {
+  window.localStorage.setItem(VIEW_MODE_STORAGE_KEY, layoutModeEl.value);
+  loadResults();
+});
 queryEl.addEventListener("keydown", (event) => {
   if (event.key === "Enter") {
     loadResults();
   }
 });
 
+paneResizerEl.addEventListener("pointerdown", beginResize);
+paneResizerEl.addEventListener("pointermove", updateResize);
+paneResizerEl.addEventListener("pointerup", endResize);
+paneResizerEl.addEventListener("pointercancel", endResize);
+window.addEventListener("resize", () => {
+  const current = Number.parseFloat(getComputedStyle(resultsLayoutEl).getPropertyValue("--results-width"));
+  if (!Number.isNaN(current)) {
+    applyResultsWidth(current);
+  }
+});
+
+loadUiPreferences();
+loadPaneWidth();
 loadResults();

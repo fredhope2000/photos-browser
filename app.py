@@ -1,4 +1,5 @@
 import argparse
+from functools import lru_cache
 import json
 import re
 import sqlite3
@@ -11,6 +12,7 @@ LOCAL_CONFIG = PROJECT_DIR / "local_config.json"
 JOINED_SQL = PROJECT_DIR / "joined_catalog.sql"
 
 
+@lru_cache(maxsize=1)
 def load_config() -> dict:
     if not LOCAL_CONFIG.exists():
         raise FileNotFoundError(
@@ -40,6 +42,11 @@ def get_enrichment_db_path() -> Path:
     return resolve_path(config.get("enrichment_db_path", "./enrichment.db"))
 
 
+def get_schema_path() -> Path:
+    return PROJECT_DIR / "schema_enrichment.sql"
+
+
+@lru_cache(maxsize=1)
 def load_joined_query() -> str:
     return JOINED_SQL.read_text().strip().rstrip(";")
 
@@ -68,18 +75,44 @@ def search_matches(text: str | None, query: str | None) -> int:
     return 1 if pattern.search(text) else 0
 
 
+def ensure_enrichment_db(enrichment_db: Path) -> None:
+    enrichment_db.parent.mkdir(parents=True, exist_ok=True)
+    if enrichment_db.exists():
+        return
+    bootstrap = sqlite3.connect(enrichment_db)
+    try:
+        bootstrap.executescript(get_schema_path().read_text())
+    finally:
+        bootstrap.close()
+
+
 def connect() -> sqlite3.Connection:
     photos_db = get_photos_db_path()
     enrichment_db = get_enrichment_db_path()
     search_db = get_photos_library_path() / "database" / "search" / "psi.sqlite"
+    ensure_enrichment_db(enrichment_db)
     uri = f"file:{photos_db}?mode=ro"
     conn = sqlite3.connect(uri, uri=True)
     conn.row_factory = sqlite3.Row
     conn.create_function("uuid_to_psi_hi", 1, uuid_to_psi_hi)
     conn.create_function("uuid_to_psi_lo", 1, uuid_to_psi_lo)
     conn.create_function("search_matches", 2, search_matches)
-    conn.execute(f"ATTACH DATABASE '{enrichment_db}' AS enrich")
-    conn.execute(f"ATTACH DATABASE '{search_db}' AS psi")
+    safe_enrichment_db = str(enrichment_db).replace("'", "''")
+    safe_search_db = str(search_db).replace("'", "''")
+    try:
+        conn.execute(f"ATTACH DATABASE '{safe_enrichment_db}' AS enrich")
+    except sqlite3.OperationalError as exc:
+        conn.close()
+        raise sqlite3.OperationalError(
+            f"Failed to attach enrichment database at {enrichment_db}: {exc}"
+        ) from exc
+    try:
+        conn.execute(f"ATTACH DATABASE '{safe_search_db}' AS psi")
+    except sqlite3.OperationalError as exc:
+        conn.close()
+        raise sqlite3.OperationalError(
+            f"Failed to attach search database at {search_db}: {exc}"
+        ) from exc
     return conn
 
 

@@ -20,14 +20,24 @@
           <input id="query" name="query" type="search" placeholder="Try filename, album, keyword, note, tag..." />
           <button id="search-button" type="button">Search</button>
         </div>
-        <label class="toggle-row" for="include-inferred">
-          <input id="include-inferred" name="include-inferred" type="checkbox" />
-          <span>Include inferred keywords</span>
-        </label>
+        <div class="control-row">
+          <label class="toggle-row" for="include-inferred">
+            <input id="include-inferred" name="include-inferred" type="checkbox" />
+            <span>Include inferred keywords</span>
+          </label>
+          <label class="select-row" for="layout-mode">
+            <span>Layout</span>
+            <select id="layout-mode" name="layout-mode">
+              <option value="list">List view</option>
+              <option value="grid">Grid view</option>
+            </select>
+          </label>
+        </div>
       </section>
 
       <section class="results-layout">
         <div id="results" class="results"></div>
+        <div id="pane-resizer" class="pane-resizer" aria-hidden="true"></div>
         <aside id="detail" class="detail-panel">
           <p class="detail-empty">Select a result to inspect it here.</p>
         </aside>

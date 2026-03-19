@@ -3,7 +3,7 @@ import shlex
 from pathlib import Path
 from typing import Mapping
 
-from flask import Flask, abort, jsonify, render_template, request, send_file
+from flask import Flask, Response, abort, jsonify, render_template, request, send_file
 
 from app import connect, get_photos_library_path, load_joined_query
 
@@ -156,6 +156,8 @@ def create_app() -> Flask:
             abort(404, description="Original file not found")
 
         mimetype = mimetypes.guess_type(row["current_filename"])[0]
+        if (mimetype or "").startswith("image/"):
+            return Response(asset_path.read_bytes(), mimetype=mimetype or "application/octet-stream")
         return send_file(asset_path, mimetype=mimetype or "application/octet-stream")
 
     return app

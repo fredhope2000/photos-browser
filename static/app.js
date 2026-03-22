@@ -10,6 +10,10 @@ const paneResizerEl = document.getElementById("pane-resizer");
 let currentActiveUuid = null;
 let activeResizePointerId = null;
 let currentAssets = [];
+let currentOffset = 0;
+let hasMoreResults = true;
+let isLoadingResults = false;
+let currentSearchKey = "";
 
 const LAYOUT_STORAGE_KEY = "photos-browser-results-width-px";
 const VIEW_MODE_STORAGE_KEY = "photos-browser-layout-mode";
@@ -17,6 +21,8 @@ const INCLUDE_INFERRED_STORAGE_KEY = "photos-browser-include-inferred";
 const RESULTS_MIN_WIDTH = 280;
 const DETAIL_MIN_WIDTH = 420;
 const RESIZER_WIDTH = 12;
+const PAGE_SIZE = 40;
+const SCROLL_THRESHOLD_PX = 320;
 
 function escapeHtml(value) {
   return String(value ?? "")
@@ -183,34 +189,20 @@ function selectAsset(assetUuid) {
 
 function bindResultCardHandlers() {
   for (const card of resultsEl.querySelectorAll(".result-card")) {
+    if (card.dataset.boundClick === "1") {
+      continue;
+    }
+    card.dataset.boundClick = "1";
     card.addEventListener("click", () => {
       selectAsset(card.dataset.uuid);
     });
   }
 }
 
-function renderResults(assets) {
-  currentAssets = assets;
-  if (!assets.length) {
-    resultsEl.innerHTML = '<p class="detail-empty">No results.</p>';
-    detailEl.innerHTML = '<p class="detail-empty">Try a broader search.</p>';
-    currentAssets = [];
-    return;
-  }
-
-  if (!currentActiveUuid && assets[0]) {
-    currentActiveUuid = assets[0].asset_uuid;
-  }
-
-  const selected = assets.find((asset) => asset.asset_uuid === currentActiveUuid) || assets[0];
-  currentActiveUuid = selected.asset_uuid;
-
+function renderResultItems(assets) {
   const layoutMode = layoutModeEl.value;
-  resultsEl.classList.toggle("results-grid", layoutMode === "grid");
-  resultsEl.classList.toggle("results-list", layoutMode !== "grid");
-
   if (layoutMode === "grid") {
-    resultsEl.innerHTML = assets.map((asset) => `
+    return assets.map((asset) => `
       <article class="result-card result-tile${asset.asset_uuid === currentActiveUuid ? " active" : ""}" data-uuid="${asset.asset_uuid}">
         <div class="tile-media">${thumbnailMarkup(asset)}</div>
         <div class="tile-body">
@@ -220,33 +212,94 @@ function renderResults(assets) {
         </div>
       </article>
     `).join("");
+  }
+  return assets.map((asset) => `
+    <article class="result-card${asset.asset_uuid === currentActiveUuid ? " active" : ""}" data-uuid="${asset.asset_uuid}">
+      <h2 class="result-title">${escapeHtml(asset.title || asset.original_filename || asset.current_filename)}</h2>
+      <p class="result-meta">${escapeHtml(asset.created_utc || "Unknown time")}</p>
+      <p class="result-meta">${escapeHtml(asset.keywords || asset.generated_tags || asset.original_path)}</p>
+    </article>
+  `).join("");
+}
+
+function renderResults(assets, { append = false } = {}) {
+  currentAssets = append ? currentAssets.concat(assets) : assets;
+  if (!currentAssets.length) {
+    resultsEl.innerHTML = '<p class="detail-empty">No results.</p>';
+    detailEl.innerHTML = '<p class="detail-empty">Try a broader search.</p>';
+    currentAssets = [];
+    return;
+  }
+
+  if ((!append || !currentActiveUuid) && currentAssets[0]) {
+    currentActiveUuid = currentAssets[0].asset_uuid;
+  }
+
+  const selected = currentAssets.find((asset) => asset.asset_uuid === currentActiveUuid) || currentAssets[0];
+  currentActiveUuid = selected.asset_uuid;
+
+  const layoutMode = layoutModeEl.value;
+  resultsEl.classList.toggle("results-grid", layoutMode === "grid");
+  resultsEl.classList.toggle("results-list", layoutMode !== "grid");
+  if (append) {
+    resultsEl.insertAdjacentHTML("beforeend", renderResultItems(assets));
+    updateActiveCard();
   } else {
-    resultsEl.innerHTML = assets.map((asset) => `
-      <article class="result-card${asset.asset_uuid === currentActiveUuid ? " active" : ""}" data-uuid="${asset.asset_uuid}">
-        <h2 class="result-title">${escapeHtml(asset.title || asset.original_filename || asset.current_filename)}</h2>
-        <p class="result-meta">${escapeHtml(asset.created_utc || "Unknown time")}</p>
-        <p class="result-meta">${escapeHtml(asset.keywords || asset.generated_tags || asset.original_path)}</p>
-      </article>
-    `).join("");
+    resultsEl.innerHTML = renderResultItems(currentAssets);
   }
 
   renderDetail(selected);
   bindResultCardHandlers();
 }
 
-async function loadResults() {
+function getSearchKey() {
+  return JSON.stringify({
+    q: queryEl.value,
+    includeInferred: includeInferredEl.checked,
+    layout: layoutModeEl.value,
+  });
+}
+
+async function loadResults({ append = false } = {}) {
+  const searchKey = getSearchKey();
+  if (!append) {
+    currentSearchKey = searchKey;
+    currentOffset = 0;
+    hasMoreResults = true;
+    currentAssets = [];
+  } else if (isLoadingResults || !hasMoreResults || searchKey !== currentSearchKey) {
+    return;
+  }
+
+  isLoadingResults = true;
   const query = new URLSearchParams({
     q: queryEl.value,
-    limit: "40",
+    limit: String(PAGE_SIZE),
+    offset: String(currentOffset),
     include_inferred: includeInferredEl.checked ? "1" : "0",
   });
   const response = await fetch(`/api/assets?${query.toString()}`);
+  isLoadingResults = false;
   if (!response.ok) {
-    resultsEl.innerHTML = '<p class="detail-empty">Failed to load results.</p>';
+    if (!append) {
+      resultsEl.innerHTML = '<p class="detail-empty">Failed to load results.</p>';
+    }
     return;
   }
-  const assets = await response.json();
-  renderResults(assets);
+  const payload = await response.json();
+  currentOffset = payload.next_offset;
+  hasMoreResults = payload.has_more;
+  renderResults(payload.items, { append });
+}
+
+function maybeLoadMoreResults() {
+  if (!hasMoreResults || isLoadingResults) {
+    return;
+  }
+  const remaining = resultsEl.scrollHeight - resultsEl.scrollTop - resultsEl.clientHeight;
+  if (remaining <= SCROLL_THRESHOLD_PX) {
+    loadResults({ append: true });
+  }
 }
 
 searchButtonEl.addEventListener("click", loadResults);
@@ -268,6 +321,7 @@ paneResizerEl.addEventListener("pointerdown", beginResize);
 paneResizerEl.addEventListener("pointermove", updateResize);
 paneResizerEl.addEventListener("pointerup", endResize);
 paneResizerEl.addEventListener("pointercancel", endResize);
+resultsEl.addEventListener("scroll", maybeLoadMoreResults);
 window.addEventListener("resize", () => {
   const current = Number.parseFloat(getComputedStyle(resultsLayoutEl).getPropertyValue("--results-width"));
   if (!Number.isNaN(current)) {

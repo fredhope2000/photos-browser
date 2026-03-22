@@ -65,6 +65,7 @@ def create_app() -> Flask:
         query = request.args.get("q", "").strip().lower()
         terms = parse_search_terms(query)
         limit = min(max(request.args.get("limit", default=50, type=int), 1), 200)
+        offset = max(request.args.get("offset", default=0, type=int), 0)
         include_inferred = request.args.get("include_inferred", "1") not in {"0", "false", "False"}
 
         sql = f"""
@@ -112,13 +113,19 @@ def create_app() -> Flask:
 
             sql += "\nWHERE " + "\n  AND ".join(term_clauses)
 
-        sql += " ORDER BY created_utc DESC LIMIT ?"
-        params.append(limit)
+        sql += " ORDER BY created_utc DESC LIMIT ? OFFSET ?"
+        params.extend([limit + 1, offset])
 
         with connect() as conn:
             rows = conn.execute(sql, params).fetchall()
 
-        return jsonify([asset_row_to_dict(row) for row in rows])
+        has_more = len(rows) > limit
+        items = [asset_row_to_dict(row) for row in rows[:limit]]
+        return jsonify({
+            "items": items,
+            "has_more": has_more,
+            "next_offset": offset + len(items),
+        })
 
     @app.get("/api/assets/<asset_uuid>")
     def get_asset(asset_uuid: str):

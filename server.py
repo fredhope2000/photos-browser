@@ -5,7 +5,7 @@ from typing import Mapping
 
 from flask import Flask, Response, abort, jsonify, render_template, request, send_file
 
-from app import connect, get_photos_library_path, load_joined_query
+from app import connect, connect_photos_only, get_photos_library_path, load_joined_query
 
 
 PROJECT_DIR = Path(__file__).resolve().parent
@@ -145,15 +145,18 @@ def create_app() -> Flask:
 
     @app.get("/media/original/<asset_uuid>")
     def get_original(asset_uuid: str):
-        sql = f"""
-        SELECT asset_uuid, original_path, current_filename, uti
-        FROM (
-          {base_query}
-        ) catalog
-        WHERE asset_uuid = ?
+        sql = """
+        SELECT
+          ZUUID AS asset_uuid,
+          'originals/' || ZDIRECTORY || '/' || ZFILENAME AS original_path,
+          ZFILENAME AS current_filename,
+          ZUNIFORMTYPEIDENTIFIER AS uti
+        FROM ZASSET
+        WHERE ZUUID = ?
+          AND ZTRASHEDSTATE = 0
         LIMIT 1
         """
-        with connect() as conn:
+        with connect_photos_only() as conn:
             row = conn.execute(sql, (asset_uuid,)).fetchone()
         if row is None:
             abort(404, description="Asset not found")

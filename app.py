@@ -116,6 +116,14 @@ def connect() -> sqlite3.Connection:
     return conn
 
 
+def connect_photos_only() -> sqlite3.Connection:
+    photos_db = get_photos_db_path()
+    uri = f"file:{photos_db}?mode=ro"
+    conn = sqlite3.connect(uri, uri=True)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
 def fetch_rows(limit: int) -> list[dict]:
     joined_query = load_joined_query() + " ORDER BY created_utc DESC LIMIT ?"
     with connect() as conn:
